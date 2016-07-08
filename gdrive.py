@@ -12,6 +12,7 @@ from oauth2client import tools
 
 import zipfile,os.path
 from os import walk
+import sys
 
 try:
     import argparse
@@ -25,6 +26,25 @@ SCOPES = 'https://www.googleapis.com/auth/drive  https://www.googleapis.com/auth
 CLIENT_SECRET_FILE = 'client_secret.json'
 APPLICATION_NAME = 'Drive API Python Quickstart'
 
+def printProgress (iteration, total, prefix = '', suffix = '', decimals = 2, barLength = 100):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : number of decimals in percent complete (Int)
+        barLength   - Optional  : character length of bar (Int)
+    """
+    filledLength    = int(round(barLength * iteration / float(total)))
+    percents        = round(100.00 * (iteration / float(total)), decimals)
+    bar             = '#' * filledLength + '-' * (barLength - filledLength)
+    sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percents, '%', suffix)),
+    sys.stdout.flush()
+    if iteration == total:
+        sys.stdout.write('\n')
+        sys.stdout.flush()
 
 def delete_file(service, file_id):
     try:
@@ -89,7 +109,7 @@ def main():
 
     #m:0BytZMivljGnOMzhTX2c5b1hoRFU
     #e:0BytZMivljGnOZkFlQWhHV0JwVjg
-    targetFolder = '0BytZMivljGnOZkFlQWhHV0JwVjg'
+    targetFolder = '0BytZMivljGnOMzhTX2c5b1hoRFU'
     credentials = get_credentials()
 
     #This single line is different from what Google provides you.
@@ -106,7 +126,7 @@ def main():
 
     results = service.files().list(
         pageSize=3,
-        q="mimeType='application/zip' and '0BytZMivljGnOZkFlQWhHV0JwVjg' in parents",
+        q="mimeType='application/zip' and '0BytZMivljGnOMzhTX2c5b1hoRFU' in parents",
         fields="nextPageToken, files(id, name, parents)"
     ).execute()
 
@@ -138,7 +158,7 @@ def main():
                 status, done = downloader.next_chunk()
                 if current != int(status.progress() * 100):
                     current = int(status.progress() * 100)
-                    print("Download %d%%." % current)
+                    printProgress(current, 100)
             fh.close()
 
             currentpath = os.path.dirname(__file__)
@@ -152,10 +172,15 @@ def main():
             unzip(filename, destination)
             print("Unzip Done.")
 
-            f = []
+            cleanup = []
+            print('[Upload Start]')
+            upload_error = False
             for (dirpath, dirnames, filenames) in walk(destination):
                 if (len(dirnames) == 0):
                     folderid = createfolder(service, targetFolder, lastplace)
+                    cleanup.append("folder," + folderid)
+                    total_num = len(filenames)
+                    current = 1
 
                     for file in filenames:
                         # Upload files.
@@ -169,17 +194,32 @@ def main():
                             media = http.MediaFileUpload(fullpath,
                                                          mimetype='image/jpg',
                                                          resumable=True)
-                            file = service.files().create(body=file_metadata,
+                            try:
+                                file = service.files().create(body=file_metadata,
                                                           media_body=media,
-                                                          fields='id').execute()
-                            print('File ID: %s' % file.get('id'))
+                                                          fields='id, name').execute()
+                                cleanup.append("{0},{1}".format(file.get('name'), file.get('id')))
+                                printProgress(current, total_num)
+                                current = current + 1
+                            except errors.HttpError, error:
+                                upload_error = True
+                                print('')
+                                print('[Error] ' + error.message)
+                                for element in cleanup:
+                                    print(element)
+                                break #Break from file upload loop
+
                 else:
                     #Len (Dir name) > 0
                     lastplace = dirnames[0]
             #End For File Loop
             #File Delete
-            delete_file(service, ids)
-            print("file deleted.")
+            if upload_error == False:
+                delete_file(service, ids)
+                print('')
+                print('Zip File deleted.')
+            else:
+                break
 
             i = i + 1
 
